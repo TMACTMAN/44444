@@ -1,0 +1,8 @@
+{
+  "name": "Remix Aetheria RPG1",
+  "description": "AI Native 永恒因果沙盒 RPG — 基于 Gemini 大模型驱动的全进程 AI DM 沙盒游戏",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
