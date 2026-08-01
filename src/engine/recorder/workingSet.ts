@@ -1,4 +1,4 @@
-import { Character, Location, Organization, Seed, HiddenTruth, WorldSnapshot } from '../../types';
+import { Character, Location, Organization, Seed, HiddenTruth, WorldSnapshot, WorldTransaction, ScheduledCheckpoint } from '../../types';
 import { WorldRepository } from '../world/worldRepository';
 import { RecorderError } from './recorderErrors';
 import { globalWorld } from '../worldState';
@@ -14,12 +14,16 @@ export class RecorderWorkingSet {
   private organizations = new Map<string, Organization>();
   private seeds = new Map<string, Seed>();
   private truths = new Map<string, HiddenTruth>();
+  private transactions = new Map<string, WorldTransaction>();
+  private checkpoints = new Map<string, ScheduledCheckpoint>();
 
   private originalCharacters = new Map<string, Character>();
   private originalLocations = new Map<string, Location>();
   private originalOrganizations = new Map<string, Organization>();
   private originalSeeds = new Map<string, Seed>();
   private originalTruths = new Map<string, HiddenTruth>();
+  private originalTransactions = new Map<string, WorldTransaction>();
+  private originalCheckpoints = new Map<string, ScheduledCheckpoint>();
 
   private originalSnapshot?: WorldSnapshot;
   private workingSnapshot?: WorldSnapshot;
@@ -29,6 +33,8 @@ export class RecorderWorkingSet {
   private dirtyOrganizationIds = new Set<string>();
   private dirtySeedIds = new Set<string>();
   private dirtyTruthIds = new Set<string>();
+  private dirtyTransactionIds = new Set<string>();
+  private dirtyCheckpointIds = new Set<string>();
 
   constructor(public readonly worldId: string) {}
 
@@ -250,6 +256,86 @@ export class RecorderWorkingSet {
     }
   }
 
+  public async getTransaction(id: string): Promise<WorldTransaction> {
+    if (this.transactions.has(id)) {
+      return this.transactions.get(id)!;
+    }
+    const fromRepo = await WorldRepository.getWorldTransaction(this.worldId, id);
+    if (!fromRepo) {
+      throw new RecorderError('TRANSACTION_NOT_FOUND', `Transaction [${id}] not found in world [${this.worldId}]`);
+    }
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalTransactions.set(id, origCopy);
+    this.transactions.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalTransaction(id: string): WorldTransaction | undefined {
+    return this.originalTransactions.get(id);
+  }
+
+  public markTransactionDirty(id: string): void {
+    this.dirtyTransactionIds.add(id);
+  }
+
+  public addTransaction(tx: WorldTransaction): WorldTransaction {
+    const copy = deepClone(tx);
+    this.transactions.set(copy.id, copy);
+    this.dirtyTransactionIds.add(copy.id);
+    return copy;
+  }
+
+  public async assertTransactionDoesNotExist(id: string, proposalId?: string): Promise<void> {
+    if (this.transactions.has(id)) {
+      throw new RecorderError('DUPLICATE_ENTITY_ID', `Transaction [${id}] already exists`, proposalId);
+    }
+    const fromRepo = await WorldRepository.getWorldTransaction(this.worldId, id);
+    if (fromRepo) {
+      throw new RecorderError('DUPLICATE_ENTITY_ID', `Transaction [${id}] already exists`, proposalId);
+    }
+  }
+
+  public async getCheckpoint(id: string): Promise<ScheduledCheckpoint> {
+    if (this.checkpoints.has(id)) {
+      return this.checkpoints.get(id)!;
+    }
+    const fromRepo = await WorldRepository.getScheduledCheckpoint(this.worldId, id);
+    if (!fromRepo) {
+      throw new RecorderError('CHECKPOINT_NOT_FOUND', `Checkpoint [${id}] not found in world [${this.worldId}]`);
+    }
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalCheckpoints.set(id, origCopy);
+    this.checkpoints.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalCheckpoint(id: string): ScheduledCheckpoint | undefined {
+    return this.originalCheckpoints.get(id);
+  }
+
+  public markCheckpointDirty(id: string): void {
+    this.dirtyCheckpointIds.add(id);
+  }
+
+  public addCheckpoint(cp: ScheduledCheckpoint): ScheduledCheckpoint {
+    const copy = deepClone(cp);
+    this.checkpoints.set(copy.id, copy);
+    this.dirtyCheckpointIds.add(copy.id);
+    return copy;
+  }
+
+  public async assertCheckpointDoesNotExist(id: string, proposalId?: string): Promise<void> {
+    if (this.checkpoints.has(id)) {
+      throw new RecorderError('DUPLICATE_ENTITY_ID', `Checkpoint [${id}] already exists`, proposalId);
+    }
+    const fromRepo = await WorldRepository.getScheduledCheckpoint(this.worldId, id);
+    if (fromRepo) {
+      throw new RecorderError('DUPLICATE_ENTITY_ID', `Checkpoint [${id}] already exists`, proposalId);
+    }
+  }
+
   public getDirtyCharacters(): Character[] {
     return Array.from(this.dirtyCharacterIds).map((id) => this.characters.get(id)!);
   }
@@ -268,6 +354,14 @@ export class RecorderWorkingSet {
 
   public getDirtyTruths(): HiddenTruth[] {
     return Array.from(this.dirtyTruthIds).map((id) => this.truths.get(id)!);
+  }
+
+  public getDirtyTransactions(): WorldTransaction[] {
+    return Array.from(this.dirtyTransactionIds).map((id) => this.transactions.get(id)!);
+  }
+
+  public getDirtyCheckpoints(): ScheduledCheckpoint[] {
+    return Array.from(this.dirtyCheckpointIds).map((id) => this.checkpoints.get(id)!);
   }
 
   public async hasLocation(id: string): Promise<boolean> {

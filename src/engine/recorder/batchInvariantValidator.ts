@@ -57,6 +57,29 @@ export class BatchInvariantValidator {
         }
       }
 
+      // Presence State Validation
+      if (char.presence_state === 'AT_LOCATION') {
+        if (!char.location_id) {
+          throw new RecorderError(
+            'INVARIANT_FAILED',
+            `Character [${char.id}] in AT_LOCATION presence state must have location_id`
+          );
+        }
+      } else if (char.presence_state === 'IN_TRANSIT') {
+        if (char.location_id !== null) {
+          throw new RecorderError(
+            'INVARIANT_FAILED',
+            `Character [${char.id}] in IN_TRANSIT presence state must have null location_id`
+          );
+        }
+        if (!char.current_transaction_id) {
+          throw new RecorderError(
+            'INVARIANT_FAILED',
+            `Character [${char.id}] in IN_TRANSIT presence state must have current_transaction_id`
+          );
+        }
+      }
+
       // 9. 死亡角色不可获得新行动 (Before/After 校验)
       if (char.status === 'DEAD' && char.current_action && char.current_action.type !== 'IDLE' && char.current_action.type !== 'NONE') {
         const origChar = workingSet.getOriginalCharacter(char.id);
@@ -131,6 +154,40 @@ export class BatchInvariantValidator {
             }
           }
         }
+      }
+    }
+
+    // Check Dirty Transactions
+    const dirtyTransactions = workingSet.getDirtyTransactions();
+    for (const tx of dirtyTransactions) {
+      if (tx.expected_end_epoch < tx.start_epoch) {
+        throw new RecorderError(
+          'INVARIANT_FAILED',
+          `Transaction [${tx.id}] expected_end_epoch (${tx.expected_end_epoch}) cannot be less than start_epoch (${tx.start_epoch})`
+        );
+      }
+      for (const actorId of tx.actor_ids) {
+        const actorExists = await workingSet.hasCharacter(actorId);
+        if (!actorExists) {
+          throw new RecorderError(
+            'INVARIANT_FAILED',
+            `Transaction [${tx.id}] includes non-existent actor [${actorId}]`
+          );
+        }
+      }
+      if (tx.status === 'COMPLETED' && !tx.completed_epoch) {
+        throw new RecorderError(
+          'INVARIANT_FAILED',
+          `Completed Transaction [${tx.id}] must have completed_epoch set`
+        );
+      }
+    }
+
+    // Check Dirty Checkpoints
+    const dirtyCheckpoints = workingSet.getDirtyCheckpoints();
+    for (const cp of dirtyCheckpoints) {
+      if (!cp.transaction_id) {
+        throw new RecorderError('INVARIANT_FAILED', `Checkpoint [${cp.id}] missing transaction_id`);
       }
     }
   }

@@ -14,6 +14,10 @@ import { WorldRepository } from './src/engine/world/worldRepository';
 import { recorder } from './src/engine/recorder/recorder';
 import { StateChangeProposal } from './src/engine/recorder/changeSchemas';
 
+import { TransactionService } from './src/engine/timeline/transactionService';
+import { CheckpointProcessor } from './src/engine/timeline/checkpointProcessor';
+import { TimelineError } from './src/engine/timeline/timelineErrors';
+
 dotenv.config();
 
 async function startServer() {
@@ -304,6 +308,109 @@ async function startServer() {
     };
 
     res.json({ status: 'ok', artCard });
+  });
+
+  // === PHASE 3 TIMELINE API ENDPOINTS ===
+
+  // Plan travel transaction
+  app.post('/api/v1/timeline/plan-travel', async (req, res) => {
+    try {
+      const { worldId = 'world-snapshot-001', actorId, destinationLocationId, startEpoch, speedMultiplier } = req.body;
+      if (!actorId || !destinationLocationId) {
+        res.status(400).json({ error: 'actorId and destinationLocationId are required' });
+        return;
+      }
+      const effectiveStartEpoch = typeof startEpoch === 'number' ? startEpoch : globalWorld.snapshot.epoch;
+      const result = await TransactionService.planTravel({
+        worldId,
+        actorId,
+        destinationLocationId,
+        startEpoch: effectiveStartEpoch,
+        speedMultiplier,
+      });
+      res.json({ status: 'ok', ...result });
+    } catch (err: any) {
+      if (err instanceof TimelineError) {
+        res.status(400).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || 'Internal server error' });
+      }
+    }
+  });
+
+  // Cancel transaction
+  app.post('/api/v1/timeline/cancel-transaction', async (req, res) => {
+    try {
+      const { worldId = 'world-snapshot-001', transactionId, reason = 'User cancelled', epoch } = req.body;
+      if (!transactionId) {
+        res.status(400).json({ error: 'transactionId is required' });
+        return;
+      }
+      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      await TransactionService.cancelTransaction(worldId, transactionId, reason, effectiveEpoch);
+      res.json({ status: 'ok', transactionId });
+    } catch (err: any) {
+      if (err instanceof TimelineError) {
+        res.status(400).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || 'Internal server error' });
+      }
+    }
+  });
+
+  // Fail transaction
+  app.post('/api/v1/timeline/fail-transaction', async (req, res) => {
+    try {
+      const { worldId = 'world-snapshot-001', transactionId, reason = 'Travel interrupted', epoch } = req.body;
+      if (!transactionId) {
+        res.status(400).json({ error: 'transactionId is required' });
+        return;
+      }
+      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      await TransactionService.failTransaction(worldId, transactionId, reason, effectiveEpoch);
+      res.json({ status: 'ok', transactionId });
+    } catch (err: any) {
+      if (err instanceof TimelineError) {
+        res.status(400).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || 'Internal server error' });
+      }
+    }
+  });
+
+  // Get active transactions for actor
+  app.get('/api/v1/timeline/transactions/:actorId', async (req, res) => {
+    try {
+      const worldId = (req.query.worldId as string) || 'world-snapshot-001';
+      const transactions = await WorldRepository.getTransactionsForActor(worldId, req.params.actorId);
+      res.json({ status: 'ok', transactions });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get due checkpoints
+  app.get('/api/v1/timeline/checkpoints/due', async (req, res) => {
+    try {
+      const worldId = (req.query.worldId as string) || 'world-snapshot-001';
+      const epoch = parseInt(req.query.epoch as string) || globalWorld.snapshot.epoch;
+      const checkpoints = await WorldRepository.getDueCheckpoints(worldId, epoch);
+      res.json({ status: 'ok', checkpoints });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Process due checkpoints manually
+  app.post('/api/v1/timeline/checkpoints/process', async (req, res) => {
+    try {
+      const { worldId = 'world-snapshot-001', epoch } = req.body;
+      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      const result = await CheckpointProcessor.processDueCheckpoints(worldId, effectiveEpoch);
+      res.json({ status: 'ok', ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // 14. Admin Stats & Invariant Checks

@@ -26,6 +26,14 @@ export const StateChangeOperationEnum = z.enum([
   'UPDATE_TRANSACTION',
   'CREATE_TRANSACTION',
   'ADD_FACT',
+  'CREATE_WORLD_TRANSACTION',
+  'UPDATE_WORLD_TRANSACTION',
+  'CREATE_SCHEDULED_CHECKPOINT',
+  'UPDATE_SCHEDULED_CHECKPOINT',
+  'SET_CHARACTER_PRESENCE',
+  'COMPLETE_TRANSACTION',
+  'FAIL_TRANSACTION',
+  'CANCEL_TRANSACTION',
 ]);
 
 export type StateChangeOperation = z.infer<typeof StateChangeOperationEnum>;
@@ -100,7 +108,7 @@ export const StateChangeProposalSchema = z.object({
   effectiveEpoch: z.number().int().min(1),
   preconditions: z.array(WorldConditionSchema).optional().default([]),
   source: z.object({
-    type: z.enum(['PLAYER_ACTION', 'DM_ACTION', 'LLM', 'SCHEDULER', 'SIMULATION', 'SYSTEM', 'WORLD_BOOTSTRAP']),
+    type: z.enum(['PLAYER_ACTION', 'DM_ACTION', 'LLM', 'SCHEDULER', 'SIMULATION', 'SYSTEM', 'WORLD_BOOTSTRAP', 'TIMELINE']),
     id: z.string().optional(),
   }),
 });

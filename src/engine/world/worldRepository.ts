@@ -67,13 +67,14 @@ export class WorldRepository {
   }
 
   public static async saveCharacter(worldId: string, char: Character): Promise<void> {
+    const presenceState = char.presence_state || (char.status === 'DEAD' ? 'DEAD' : (char.status === 'MISSING' ? 'MISSING' : (char.location_id ? 'AT_LOCATION' : 'IN_TRANSIT')));
     await dbManager.run(
       `INSERT INTO characters (
-        id, world_id, type, name, title, species, age, status, location_id,
+        id, world_id, type, name, title, species, age, status, presence_state, current_transaction_id, location_id,
         goal_json, personality_json, fear_json, attributes_json, skills_json,
         resources_json, inventory_json, knowledge_json, memory_json, relationships_json,
         current_action_json, frozen, simulation_level, last_simulated_epoch, created_at_epoch, updated_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         world_id = excluded.world_id,
         type = excluded.type,
@@ -82,6 +83,8 @@ export class WorldRepository {
         species = excluded.species,
         age = excluded.age,
         status = excluded.status,
+        presence_state = excluded.presence_state,
+        current_transaction_id = excluded.current_transaction_id,
         location_id = excluded.location_id,
         goal_json = excluded.goal_json,
         personality_json = excluded.personality_json,
@@ -107,6 +110,8 @@ export class WorldRepository {
         char.species || 'Human',
         char.age || 25,
         char.status,
+        presenceState,
+        char.current_transaction_id || null,
         char.location_id,
         JSON.stringify(char.goal || {}),
         JSON.stringify(char.personality || []),
@@ -129,6 +134,7 @@ export class WorldRepository {
   }
 
   private static mapRowToCharacter(row: any): Character {
+    const presenceState = row.presence_state || (row.status === 'DEAD' ? 'DEAD' : (row.status === 'MISSING' ? 'MISSING' : (row.location_id ? 'AT_LOCATION' : 'IN_TRANSIT')));
     return {
       id: row.id,
       type: row.type,
@@ -137,6 +143,8 @@ export class WorldRepository {
       species: row.species,
       age: row.age,
       status: row.status,
+      presence_state: presenceState as any,
+      current_transaction_id: row.current_transaction_id || null,
       location_id: row.location_id,
       goal: JSON.parse(row.goal_json || '{}'),
       personality: JSON.parse(row.personality_json || '[]'),
@@ -657,43 +665,115 @@ export class WorldRepository {
     }));
   }
 
+  // === LOCATION EDGES ===
+  public static async getAllLocationEdges(worldId: string): Promise<LocationEdge[]> {
+    const rows = await dbManager.all<any>('SELECT * FROM location_edges WHERE world_id = ?', [worldId]);
+    return rows.map(this.mapRowToLocationEdge);
+  }
+
+  public static async getLocationEdge(worldId: string, edgeId: string): Promise<LocationEdge | null> {
+    const row = await dbManager.get<any>('SELECT * FROM location_edges WHERE world_id = ? AND id = ?', [worldId, edgeId]);
+    if (!row) return null;
+    return this.mapRowToLocationEdge(row);
+  }
+
+  public static async getLocationEdgesFrom(worldId: string, fromLocationId: string): Promise<LocationEdge[]> {
+    const rows = await dbManager.all<any>('SELECT * FROM location_edges WHERE world_id = ? AND from_location_id = ?', [worldId, fromLocationId]);
+    return rows.map(this.mapRowToLocationEdge);
+  }
+
+  public static async saveLocationEdge(worldId: string, edge: LocationEdge): Promise<void> {
+    await dbManager.run(
+      `INSERT INTO location_edges (
+        id, world_id, from_location_id, to_location_id, distance, travel_cost, travel_time_epochs, status, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        from_location_id = excluded.from_location_id,
+        to_location_id = excluded.to_location_id,
+        distance = excluded.distance,
+        travel_cost = excluded.travel_cost,
+        travel_time_epochs = excluded.travel_time_epochs,
+        status = excluded.status,
+        metadata_json = excluded.metadata_json`,
+      [
+        edge.id,
+        worldId,
+        edge.from_location_id,
+        edge.to_location_id,
+        edge.distance ?? 1.0,
+        edge.travel_cost ?? 1.0,
+        edge.travel_time_epochs ?? 1,
+        edge.status || 'OPEN',
+        JSON.stringify(edge.metadata || {}),
+      ]
+    );
+  }
+
+  private static mapRowToLocationEdge(r: any): LocationEdge {
+    return {
+      id: r.id,
+      world_id: r.world_id,
+      from_location_id: r.from_location_id,
+      to_location_id: r.to_location_id,
+      distance: r.distance,
+      travel_cost: r.travel_cost,
+      travel_time_epochs: r.travel_time_epochs,
+      status: r.status,
+      metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined,
+    };
+  }
+
   // === WORLD TRANSACTIONS ===
   public static async getAllTransactions(worldId: string): Promise<WorldTransaction[]> {
     const rows = await dbManager.all<any>('SELECT * FROM world_transactions WHERE world_id = ?', [worldId]);
-    return rows.map((r) => ({
-      id: r.id,
-      world_id: r.world_id,
-      type: r.type,
-      status: r.status,
-      actor_ids: JSON.parse(r.actor_ids_json || '[]'),
-      origin_location_id: r.origin_location_id,
-      destination_location_id: r.destination_location_id,
-      route_location_ids: JSON.parse(r.route_location_ids_json || '[]'),
-      start_epoch: r.start_epoch,
-      expected_end_epoch: r.expected_end_epoch,
-      current_checkpoint_index: r.current_checkpoint_index,
-      checkpoints: JSON.parse(r.checkpoints_json || '[]'),
-      preconditions: JSON.parse(r.preconditions_json || '[]'),
-      dependency_ids: JSON.parse(r.dependency_ids_json || '[]'),
-      parent_seed_id: r.parent_seed_id,
-      parent_organization_id: r.parent_organization_id,
-      result: r.result_json ? JSON.parse(r.result_json) : undefined,
-      invalidation_reason: r.invalidation_reason,
-      created_at_epoch: r.created_at_epoch,
-      updated_at_epoch: r.updated_at_epoch,
-    }));
+    return rows.map(this.mapRowToTransaction);
+  }
+
+  public static async getWorldTransaction(worldId: string, transactionId: string): Promise<WorldTransaction | null> {
+    const row = await dbManager.get<any>('SELECT * FROM world_transactions WHERE world_id = ? AND id = ?', [worldId, transactionId]);
+    if (!row) return null;
+    return this.mapRowToTransaction(row);
+  }
+
+  public static async getTransactionsByStatus(worldId: string, statuses: string[]): Promise<WorldTransaction[]> {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => '?').join(',');
+    const rows = await dbManager.all<any>(
+      `SELECT * FROM world_transactions WHERE world_id = ? AND status IN (${placeholders})`,
+      [worldId, ...statuses]
+    );
+    return rows.map(this.mapRowToTransaction);
+  }
+
+  public static async getTransactionsForActor(worldId: string, actorId: string): Promise<WorldTransaction[]> {
+    const all = await this.getAllTransactions(worldId);
+    return all.filter((tx) => tx.actor_ids.includes(actorId));
+  }
+
+  public static async getTransactionsByDestination(worldId: string, locationId: string): Promise<WorldTransaction[]> {
+    const rows = await dbManager.all<any>(
+      'SELECT * FROM world_transactions WHERE world_id = ? AND destination_location_id = ?',
+      [worldId, locationId]
+    );
+    return rows.map(this.mapRowToTransaction);
+  }
+
+  public static async saveWorldTransaction(worldId: string, transaction: WorldTransaction): Promise<void> {
+    await this.saveTransaction(transaction);
   }
 
   public static async saveTransaction(tx: WorldTransaction): Promise<void> {
     await dbManager.run(
       `INSERT INTO world_transactions (
         id, world_id, type, status, actor_ids_json, origin_location_id, destination_location_id,
-        route_location_ids_json, start_epoch, expected_end_epoch, current_checkpoint_index,
+        route_location_ids_json, start_epoch, expected_end_epoch, completed_epoch, current_checkpoint_index,
         checkpoints_json, preconditions_json, dependency_ids_json, parent_seed_id, parent_organization_id,
         result_json, invalidation_reason, created_at_epoch, updated_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
+        expected_end_epoch = excluded.expected_end_epoch,
+        completed_epoch = excluded.completed_epoch,
         current_checkpoint_index = excluded.current_checkpoint_index,
         checkpoints_json = excluded.checkpoints_json,
         result_json = excluded.result_json,
@@ -710,6 +790,7 @@ export class WorldRepository {
         JSON.stringify(tx.route_location_ids || []),
         tx.start_epoch,
         tx.expected_end_epoch,
+        tx.completed_epoch ?? null,
         tx.current_checkpoint_index || 0,
         JSON.stringify(tx.checkpoints || []),
         JSON.stringify(tx.preconditions || []),
@@ -722,5 +803,104 @@ export class WorldRepository {
         tx.updated_at_epoch,
       ]
     );
+  }
+
+  private static mapRowToTransaction(r: any): WorldTransaction {
+    return {
+      id: r.id,
+      world_id: r.world_id,
+      type: r.type,
+      status: r.status,
+      actor_ids: JSON.parse(r.actor_ids_json || '[]'),
+      origin_location_id: r.origin_location_id,
+      destination_location_id: r.destination_location_id,
+      route_location_ids: JSON.parse(r.route_location_ids_json || '[]'),
+      start_epoch: r.start_epoch,
+      expected_end_epoch: r.expected_end_epoch,
+      completed_epoch: r.completed_epoch ?? null,
+      current_checkpoint_index: r.current_checkpoint_index,
+      checkpoints: JSON.parse(r.checkpoints_json || '[]'),
+      preconditions: JSON.parse(r.preconditions_json || '[]'),
+      dependency_ids: JSON.parse(r.dependency_ids_json || '[]'),
+      parent_seed_id: r.parent_seed_id,
+      parent_organization_id: r.parent_organization_id,
+      result: r.result_json ? JSON.parse(r.result_json) : undefined,
+      invalidation_reason: r.invalidation_reason,
+      created_at_epoch: r.created_at_epoch,
+      updated_at_epoch: r.updated_at_epoch,
+    };
+  }
+
+  // === SCHEDULED CHECKPOINTS ===
+  public static async saveScheduledCheckpoint(worldId: string, checkpoint: ScheduledCheckpoint): Promise<void> {
+    await dbManager.run(
+      `INSERT INTO scheduled_checkpoints (
+        id, world_id, transaction_id, epoch, type, status, sequence, payload_json, created_at_epoch, processed_at_epoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        sequence = excluded.sequence,
+        payload_json = excluded.payload_json,
+        processed_at_epoch = excluded.processed_at_epoch`,
+      [
+        checkpoint.id,
+        worldId,
+        checkpoint.transaction_id,
+        checkpoint.epoch,
+        checkpoint.type,
+        checkpoint.status || 'PENDING',
+        checkpoint.sequence ?? 0,
+        JSON.stringify(checkpoint.payload || {}),
+        checkpoint.created_at_epoch,
+        checkpoint.processed_at_epoch ?? null,
+      ]
+    );
+  }
+
+  public static async getScheduledCheckpoint(worldId: string, checkpointId: string): Promise<ScheduledCheckpoint | null> {
+    const row = await dbManager.get<any>(
+      'SELECT * FROM scheduled_checkpoints WHERE world_id = ? AND id = ?',
+      [worldId, checkpointId]
+    );
+    if (!row) return null;
+    return this.mapRowToCheckpoint(row);
+  }
+
+  public static async getDueCheckpoints(worldId: string, targetEpoch: number): Promise<ScheduledCheckpoint[]> {
+    const rows = await dbManager.all<any>(
+      'SELECT * FROM scheduled_checkpoints WHERE world_id = ? AND epoch <= ? AND status = ? ORDER BY epoch ASC, sequence ASC, id ASC',
+      [worldId, targetEpoch, 'PENDING']
+    );
+    return rows.map(this.mapRowToCheckpoint);
+  }
+
+  public static async getCheckpointsForTransaction(worldId: string, transactionId: string): Promise<ScheduledCheckpoint[]> {
+    const rows = await dbManager.all<any>(
+      'SELECT * FROM scheduled_checkpoints WHERE world_id = ? AND transaction_id = ? ORDER BY sequence ASC, epoch ASC',
+      [worldId, transactionId]
+    );
+    return rows.map(this.mapRowToCheckpoint);
+  }
+
+  public static async updateCheckpointStatus(worldId: string, checkpointId: string, status: string, processedAtEpoch?: number): Promise<void> {
+    await dbManager.run(
+      'UPDATE scheduled_checkpoints SET status = ?, processed_at_epoch = ? WHERE world_id = ? AND id = ?',
+      [status, processedAtEpoch ?? null, worldId, checkpointId]
+    );
+  }
+
+  private static mapRowToCheckpoint(r: any): ScheduledCheckpoint {
+    return {
+      id: r.id,
+      world_id: r.world_id,
+      transaction_id: r.transaction_id,
+      epoch: r.epoch,
+      type: r.type,
+      status: r.status,
+      sequence: r.sequence ?? 0,
+      payload: r.payload_json ? JSON.parse(r.payload_json) : undefined,
+      created_at_epoch: r.created_at_epoch,
+      processed_at_epoch: r.processed_at_epoch ?? null,
+    };
   }
 }

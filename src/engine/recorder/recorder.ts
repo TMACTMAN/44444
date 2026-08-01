@@ -22,6 +22,8 @@ import {
   Organization,
   HiddenTruth,
   WorldSnapshot,
+  WorldTransaction,
+  ScheduledCheckpoint,
 } from '../../types';
 import { RecorderWorkingSet } from './workingSet';
 import { RecorderError } from './recorderErrors';
@@ -171,6 +173,13 @@ export class Recorder {
         }
         for (const truth of prepared.truthWrites) {
           await WorldRepository.saveHiddenTruth(worldId, truth);
+        }
+
+        for (const tx of prepared.transactionWrites) {
+          await WorldRepository.saveWorldTransaction(worldId, tx);
+        }
+        for (const cp of prepared.checkpointWrites) {
+          await WorldRepository.saveScheduledCheckpoint(worldId, cp);
         }
 
         // 2. Events
@@ -685,6 +694,106 @@ export class Recorder {
           break;
         }
 
+        case 'CREATE_WORLD_TRANSACTION': {
+          if (!payload.transaction) {
+            throw new RecorderError('INVARIANT_FAILED', 'CREATE_WORLD_TRANSACTION missing payload.transaction', prop.id);
+          }
+          const tx = payload.transaction as WorldTransaction;
+          await workingSet.assertTransactionDoesNotExist(tx.id, prop.id);
+          workingSet.addTransaction(tx);
+          afterState = deepClone(tx);
+          break;
+        }
+
+        case 'UPDATE_WORLD_TRANSACTION': {
+          const txId = (entityId || payload.transactionId || payload.id) as string;
+          const tx = await workingSet.getTransaction(txId);
+          beforeState = deepClone(tx);
+          if (payload.status) tx.status = payload.status;
+          if (typeof payload.expected_end_epoch === 'number') tx.expected_end_epoch = payload.expected_end_epoch;
+          if (typeof payload.completed_epoch === 'number') tx.completed_epoch = payload.completed_epoch;
+          if (typeof payload.current_checkpoint_index === 'number') tx.current_checkpoint_index = payload.current_checkpoint_index;
+          if (payload.result) tx.result = payload.result;
+          if (payload.invalidation_reason !== undefined) tx.invalidation_reason = payload.invalidation_reason;
+          tx.updated_at_epoch = effectiveEpoch;
+          workingSet.markTransactionDirty(tx.id);
+          afterState = deepClone(tx);
+          break;
+        }
+
+        case 'CREATE_SCHEDULED_CHECKPOINT': {
+          if (!payload.checkpoint) {
+            throw new RecorderError('INVARIANT_FAILED', 'CREATE_SCHEDULED_CHECKPOINT missing payload.checkpoint', prop.id);
+          }
+          const cp = payload.checkpoint as ScheduledCheckpoint;
+          await workingSet.assertCheckpointDoesNotExist(cp.id, prop.id);
+          workingSet.addCheckpoint(cp);
+          afterState = deepClone(cp);
+          break;
+        }
+
+        case 'UPDATE_SCHEDULED_CHECKPOINT': {
+          const cpId = (entityId || payload.checkpointId || payload.id) as string;
+          const cp = await workingSet.getCheckpoint(cpId);
+          beforeState = deepClone(cp);
+          if (payload.status) cp.status = payload.status;
+          if (typeof payload.processed_at_epoch === 'number') cp.processed_at_epoch = payload.processed_at_epoch;
+          workingSet.markCheckpointDirty(cp.id);
+          afterState = deepClone(cp);
+          break;
+        }
+
+        case 'SET_CHARACTER_PRESENCE': {
+          const charId = (entityId || payload.characterId) as string;
+          const char = await workingSet.getCharacter(charId);
+          beforeState = { presence_state: char.presence_state, location_id: char.location_id, current_transaction_id: char.current_transaction_id };
+          if (payload.presence_state !== undefined) char.presence_state = payload.presence_state;
+          if (payload.location_id !== undefined) char.location_id = payload.location_id;
+          if (payload.current_transaction_id !== undefined) char.current_transaction_id = payload.current_transaction_id;
+          char.updated_at_epoch = effectiveEpoch;
+          workingSet.markCharacterDirty(char.id);
+          afterState = { presence_state: char.presence_state, location_id: char.location_id, current_transaction_id: char.current_transaction_id };
+          break;
+        }
+
+        case 'COMPLETE_TRANSACTION': {
+          const txId = (entityId || payload.transactionId) as string;
+          const tx = await workingSet.getTransaction(txId);
+          beforeState = deepClone(tx);
+          tx.status = 'COMPLETED';
+          tx.completed_epoch = effectiveEpoch;
+          tx.updated_at_epoch = effectiveEpoch;
+          workingSet.markTransactionDirty(tx.id);
+          afterState = deepClone(tx);
+          break;
+        }
+
+        case 'FAIL_TRANSACTION': {
+          const txId = (entityId || payload.transactionId) as string;
+          const tx = await workingSet.getTransaction(txId);
+          beforeState = deepClone(tx);
+          tx.status = 'FAILED';
+          tx.completed_epoch = effectiveEpoch;
+          if (payload.invalidation_reason) tx.invalidation_reason = payload.invalidation_reason;
+          tx.updated_at_epoch = effectiveEpoch;
+          workingSet.markTransactionDirty(tx.id);
+          afterState = deepClone(tx);
+          break;
+        }
+
+        case 'CANCEL_TRANSACTION': {
+          const txId = (entityId || payload.transactionId) as string;
+          const tx = await workingSet.getTransaction(txId);
+          beforeState = deepClone(tx);
+          tx.status = 'CANCELLED';
+          tx.completed_epoch = effectiveEpoch;
+          if (payload.reason) tx.invalidation_reason = payload.reason;
+          tx.updated_at_epoch = effectiveEpoch;
+          workingSet.markTransactionDirty(tx.id);
+          afterState = deepClone(tx);
+          break;
+        }
+
         default:
           afterState = payload;
           break;
@@ -718,6 +827,8 @@ export class Recorder {
       organizationWrites: workingSet.getDirtyOrganizations(),
       seedWrites: workingSet.getDirtySeeds(),
       truthWrites: workingSet.getDirtyTruths(),
+      transactionWrites: workingSet.getDirtyTransactions(),
+      checkpointWrites: workingSet.getDirtyCheckpoints(),
       eventWrites,
       changeLogs,
       worldSnapshotAfter,

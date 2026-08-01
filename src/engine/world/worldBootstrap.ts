@@ -49,6 +49,24 @@ export class WorldBootstrap {
       globalWorld.locations.clear();
       locs.forEach((l) => globalWorld.locations.set(l.id, l));
 
+      const edges = await WorldRepository.getAllLocationEdges(worldId);
+      if (edges.length === 0) {
+        for (const loc of locs) {
+          for (const connId of loc.connected_to) {
+            await WorldRepository.saveLocationEdge(worldId, {
+              id: `edge-${loc.id}-${connId}`,
+              world_id: worldId,
+              from_location_id: loc.id,
+              to_location_id: connId,
+              distance: 1.0,
+              travel_cost: 1.0,
+              travel_time_epochs: 1,
+              status: 'OPEN',
+            });
+          }
+        }
+      }
+
       const orgs = await WorldRepository.getAllOrganizations(worldId);
       globalWorld.organizations.clear();
       orgs.forEach((o) => globalWorld.organizations.set(o.id, o));
@@ -84,6 +102,19 @@ export class WorldBootstrap {
 
     for (const loc of globalWorld.locations.values()) {
       await WorldRepository.saveLocation(worldId, loc);
+      for (const connId of loc.connected_to) {
+        const edgeId = `edge-${loc.id}-${connId}`;
+        await WorldRepository.saveLocationEdge(worldId, {
+          id: edgeId,
+          world_id: worldId,
+          from_location_id: loc.id,
+          to_location_id: connId,
+          distance: 1.0,
+          travel_cost: 1.0,
+          travel_time_epochs: 1,
+          status: 'OPEN',
+        });
+      }
     }
 
     for (const org of globalWorld.organizations.values()) {

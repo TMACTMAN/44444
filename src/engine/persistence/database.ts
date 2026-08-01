@@ -49,6 +49,21 @@ export class DatabaseManager {
     }
 
     this.db.exec(CREATE_TABLES_SQL);
+
+    const migrations = [
+      "ALTER TABLE characters ADD COLUMN presence_state TEXT NOT NULL DEFAULT 'AT_LOCATION';",
+      "ALTER TABLE characters ADD COLUMN current_transaction_id TEXT;",
+      "ALTER TABLE world_transactions ADD COLUMN completed_epoch INTEGER;",
+      "ALTER TABLE scheduled_checkpoints ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0;",
+    ];
+    for (const sql of migrations) {
+      try {
+        this.db.exec(sql);
+      } catch (_) {
+        // Column may already exist
+      }
+    }
+
     this.saveToDisk();
     this.initialized = true;
     console.log(`[DatabaseManager] WASM SQLite database initialized at ${DB_PATH}`);

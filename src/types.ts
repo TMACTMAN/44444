@@ -5,6 +5,7 @@
 
 export type CharacterType = 'PC' | 'NPC' | 'BEAST';
 export type CharacterStatus = 'ALIVE' | 'DEAD' | 'MISSING' | 'INCAPACITATED';
+export type PresenceState = 'AT_LOCATION' | 'IN_TRANSIT' | 'MISSING' | 'DEAD';
 export type OrgType = 'GUILD' | 'RELIGION' | 'KINGDOM' | 'MILITIA' | 'CULT' | 'CORPORATION';
 export type LocationType = 'TOWN' | 'CITY' | 'VILLAGE' | 'FOREST' | 'DUNGEON' | 'RUIN' | 'MOUNTAIN' | 'ROAD' | 'RIVER' | 'CAVE' | 'TEMPLE' | 'FORT';
 
@@ -13,7 +14,23 @@ export type FactConfidence = 'CONFIRMED' | 'RUMOR' | 'SUSPECTED' | 'FALSE';
 
 export type SeedType = 'CARAVAN' | 'AMBUSH' | 'FESTIVAL' | 'CONSTRUCTION' | 'RAID' | 'INVESTIGATION' | 'RITUAL' | 'MIGRATION' | 'DIPLOMACY' | 'ESPIONAGE';
 export type SeedStatus = 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED';
-export type EventType = 'BATTLE' | 'DISASTER' | 'DISCOVERY' | 'CEREMONY' | 'CRIME' | 'POLITICAL' | 'ECONOMIC' | 'SOCIAL' | 'NATURAL' | 'TRUTH_REVEALED';
+export type EventType =
+  | 'BATTLE'
+  | 'DISASTER'
+  | 'DISCOVERY'
+  | 'CEREMONY'
+  | 'CRIME'
+  | 'POLITICAL'
+  | 'ECONOMIC'
+  | 'SOCIAL'
+  | 'NATURAL'
+  | 'TRUTH_REVEALED'
+  | 'TRAVEL_STARTED'
+  | 'TRAVEL_PROGRESS'
+  | 'TRAVEL_DELAYED'
+  | 'TRAVEL_COMPLETED'
+  | 'TRAVEL_FAILED'
+  | 'TRANSACTION_CANCELLED';
 
 export type RelationType = 'ALLY' | 'ENEMY' | 'NEUTRAL' | 'FAMILY' | 'BUSINESS';
 export type SimulationLevel = 0 | 1 | 2 | 3 | 4;
@@ -104,8 +121,10 @@ export interface Character {
   title: string;
   species: string;
   age: number;
-  location_id: string;
+  location_id: string | null;
   status: CharacterStatus;
+  presence_state?: PresenceState;
+  current_transaction_id?: string | null;
   goal: CharacterGoal;
   fear: string;
   personality: string[];
@@ -365,19 +384,20 @@ export interface WorldTransaction {
   type: string;
   status: string;
   actor_ids: string[];
-  origin_location_id?: string;
-  destination_location_id?: string;
+  origin_location_id?: string | null;
+  destination_location_id?: string | null;
   route_location_ids: string[];
   start_epoch: number;
   expected_end_epoch: number;
+  completed_epoch?: number | null;
   current_checkpoint_index: number;
   checkpoints: any[];
   preconditions: any[];
   dependency_ids: string[];
-  parent_seed_id?: string;
-  parent_organization_id?: string;
+  parent_seed_id?: string | null;
+  parent_organization_id?: string | null;
   result?: any;
-  invalidation_reason?: string;
+  invalidation_reason?: string | null;
   created_at_epoch: number;
   updated_at_epoch: number;
 }
@@ -389,9 +409,10 @@ export interface ScheduledCheckpoint {
   epoch: number;
   type: string;
   status: string;
+  sequence?: number;
   payload?: any;
   created_at_epoch: number;
-  processed_at_epoch?: number;
+  processed_at_epoch?: number | null;
 }
 
 export interface DependencyEdge {

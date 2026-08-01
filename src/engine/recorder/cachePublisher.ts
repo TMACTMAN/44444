@@ -1,5 +1,5 @@
 import { globalWorld, setRecorderWriteContext } from '../worldState';
-import { Character, Location, Organization, Seed, HiddenTruth, Event, WorldSnapshot, StateChangeLogEntry } from '../../types';
+import { Character, Location, Organization, Seed, HiddenTruth, Event, WorldSnapshot, StateChangeLogEntry, WorldTransaction, ScheduledCheckpoint } from '../../types';
 import { StateChangeProposal } from './changeSchemas';
 
 export interface PreparedCommit {
@@ -10,6 +10,8 @@ export interface PreparedCommit {
   organizationWrites: Organization[];
   seedWrites: Seed[];
   truthWrites: HiddenTruth[];
+  transactionWrites: WorldTransaction[];
+  checkpointWrites: ScheduledCheckpoint[];
   eventWrites: Event[];
   changeLogs: StateChangeLogEntry[];
   worldSnapshotAfter?: WorldSnapshot;
