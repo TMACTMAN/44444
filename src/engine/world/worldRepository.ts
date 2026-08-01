@@ -688,6 +688,7 @@ export class WorldRepository {
         id, world_id, from_location_id, to_location_id, distance, travel_cost, travel_time_epochs, status, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        world_id = excluded.world_id,
         from_location_id = excluded.from_location_id,
         to_location_id = excluded.to_location_id,
         distance = excluded.distance,
@@ -767,14 +768,15 @@ export class WorldRepository {
       `INSERT INTO world_transactions (
         id, world_id, type, status, actor_ids_json, origin_location_id, destination_location_id,
         route_location_ids_json, start_epoch, expected_end_epoch, completed_epoch, current_checkpoint_index,
-        checkpoints_json, preconditions_json, dependency_ids_json, parent_seed_id, parent_organization_id,
+        last_valid_location_id, checkpoints_json, preconditions_json, dependency_ids_json, parent_seed_id, parent_organization_id,
         result_json, invalidation_reason, created_at_epoch, updated_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
         expected_end_epoch = excluded.expected_end_epoch,
         completed_epoch = excluded.completed_epoch,
         current_checkpoint_index = excluded.current_checkpoint_index,
+        last_valid_location_id = excluded.last_valid_location_id,
         checkpoints_json = excluded.checkpoints_json,
         result_json = excluded.result_json,
         invalidation_reason = excluded.invalidation_reason,
@@ -792,6 +794,7 @@ export class WorldRepository {
         tx.expected_end_epoch,
         tx.completed_epoch ?? null,
         tx.current_checkpoint_index || 0,
+        tx.last_valid_location_id || null,
         JSON.stringify(tx.checkpoints || []),
         JSON.stringify(tx.preconditions || []),
         JSON.stringify(tx.dependency_ids || []),
@@ -819,6 +822,7 @@ export class WorldRepository {
       expected_end_epoch: r.expected_end_epoch,
       completed_epoch: r.completed_epoch ?? null,
       current_checkpoint_index: r.current_checkpoint_index,
+      last_valid_location_id: r.last_valid_location_id || undefined,
       checkpoints: JSON.parse(r.checkpoints_json || '[]'),
       preconditions: JSON.parse(r.preconditions_json || '[]'),
       dependency_ids: JSON.parse(r.dependency_ids_json || '[]'),

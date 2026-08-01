@@ -312,8 +312,14 @@ export class Recorder {
 
           if (payload.name) char.name = String(payload.name);
           if (payload.title) char.title = String(payload.title);
-          if (payload.status) char.status = payload.status as CharacterStatus;
-          if (payload.location_id) char.location_id = String(payload.location_id);
+          if (payload.status) {
+            char.status = payload.status as CharacterStatus;
+            if (payload.status === 'DEAD') {
+              char.presence_state = 'DEAD';
+              char.current_action = { type: 'NONE', description: 'Deceased' };
+            }
+          }
+          if ('location_id' in payload) char.location_id = payload.location_id === null ? null : String(payload.location_id);
           if (payload.skills && typeof payload.skills === 'object') char.skills = { ...char.skills, ...payload.skills };
           if (payload.attributes && typeof payload.attributes === 'object') char.attributes = { ...char.attributes, ...payload.attributes };
           if (payload.resources && typeof payload.resources === 'object') char.resources = { ...char.resources, ...payload.resources };
@@ -713,6 +719,7 @@ export class Recorder {
           if (typeof payload.expected_end_epoch === 'number') tx.expected_end_epoch = payload.expected_end_epoch;
           if (typeof payload.completed_epoch === 'number') tx.completed_epoch = payload.completed_epoch;
           if (typeof payload.current_checkpoint_index === 'number') tx.current_checkpoint_index = payload.current_checkpoint_index;
+          if (payload.last_valid_location_id !== undefined) tx.last_valid_location_id = payload.last_valid_location_id;
           if (payload.result) tx.result = payload.result;
           if (payload.invalidation_reason !== undefined) tx.invalidation_reason = payload.invalidation_reason;
           tx.updated_at_epoch = effectiveEpoch;
@@ -738,6 +745,10 @@ export class Recorder {
           beforeState = deepClone(cp);
           if (payload.status) cp.status = payload.status;
           if (typeof payload.processed_at_epoch === 'number') cp.processed_at_epoch = payload.processed_at_epoch;
+          if (payload.locationId) {
+            if (!cp.payload) cp.payload = {};
+            cp.payload.locationId = payload.locationId;
+          }
           workingSet.markCheckpointDirty(cp.id);
           afterState = deepClone(cp);
           break;

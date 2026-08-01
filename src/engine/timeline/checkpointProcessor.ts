@@ -2,6 +2,7 @@ import { WorldRepository } from '../world/worldRepository';
 import { recorder } from '../recorder/recorder';
 import { StateChangeProposal } from '../recorder/changeSchemas';
 import { EventType, ScheduledCheckpoint } from '../../types';
+import { TransactionService } from './transactionService';
 import { TimelineError } from './timelineErrors';
 
 export interface CheckpointProcessResult {
@@ -26,10 +27,10 @@ export class CheckpointProcessor {
       };
     }
 
-    // Sort by epoch ASC, sequence ASC
+    // Sort strictly by epoch ASC, sequence ASC
     dueCheckpoints.sort((a, b) => {
       if (a.epoch !== b.epoch) return a.epoch - b.epoch;
-      return a.sequence - b.sequence;
+      return (a.sequence || 0) - (b.sequence || 0);
     });
 
     let processedCount = 0;
@@ -38,11 +39,12 @@ export class CheckpointProcessor {
     const eventsGenerated: any[] = [];
 
     for (const cp of dueCheckpoints) {
+      // 1. Idempotency Lock Check: only process PENDING checkpoints
       if (cp.status !== 'PENDING') continue;
 
       const tx = await WorldRepository.getWorldTransaction(worldId, cp.transaction_id);
       if (!tx || (tx.status !== 'IN_PROGRESS' && tx.status !== 'PLANNED')) {
-        // Mark checkpoint as CANCELLED since parent transaction is inactive
+        // Mark checkpoint as CANCELLED since parent transaction is inactive or missing
         await recorder.commit(worldId, [
           {
             id: `prop-cp-stale-${cp.id}`,
@@ -58,6 +60,89 @@ export class CheckpointProcessor {
         continue;
       }
 
+      // 2. Check Actor Death during transit
+      let actorDied = false;
+      let deadActorName = '';
+      for (const actorId of tx.actor_ids) {
+        const actor = await WorldRepository.getCharacter(worldId, actorId);
+        if (actor && actor.status === 'DEAD') {
+          actorDied = true;
+          deadActorName = actor.name || actorId;
+          break;
+        }
+      }
+
+      if (actorDied) {
+        const reason = `Actor [${deadActorName}] died during transit`;
+        const failProposals = await TransactionService.buildFailTransactionProposals(
+          worldId,
+          tx.id,
+          reason,
+          currentEpoch
+        );
+        const failResult = await recorder.commit(worldId, failProposals);
+        if (failResult.success) {
+          failedTransactions.push(tx.id);
+          eventsGenerated.push(...failResult.eventsGenerated);
+        } else {
+          console.error('[CheckpointProcessor] Actor death failResult failed:', failResult.errors);
+        }
+        continue;
+      }
+
+      // 3. Dynamic Edge Closure Check
+      const fromLocId = cp.payload?.fromLocationId || tx.last_valid_location_id || tx.origin_location_id;
+      const targetLocId = cp.payload?.locationId || tx.destination_location_id;
+
+      if (fromLocId && targetLocId) {
+        const edges = await WorldRepository.getAllLocationEdges(worldId);
+        const matchingEdges = edges.filter(
+          (e) =>
+            (e.from_location_id === fromLocId && e.to_location_id === targetLocId) ||
+            (e.from_location_id === targetLocId && e.to_location_id === fromLocId)
+        );
+        const blockedEdge = matchingEdges.find((e) => e.status && e.status !== 'OPEN');
+
+        if (blockedEdge) {
+          const reason = `Route segment from [${fromLocId}] to [${targetLocId}] is closed/blocked (${blockedEdge.status})`;
+          const failProposals = await TransactionService.buildFailTransactionProposals(
+            worldId,
+            tx.id,
+            reason,
+            currentEpoch
+          );
+          const failResult = await recorder.commit(worldId, failProposals);
+          if (failResult.success) {
+            failedTransactions.push(tx.id);
+            eventsGenerated.push(...failResult.eventsGenerated);
+          } else {
+            console.error('[CheckpointProcessor] Road closure failResult failed:', failResult.errors);
+          }
+          continue;
+        }
+      }
+
+      // 4. Destination / Target Location Existence Check
+      if (targetLocId) {
+        const destLoc = await WorldRepository.getLocation(worldId, targetLocId);
+        if (!destLoc) {
+          const reason = `Location [${targetLocId}] no longer exists or is invalid`;
+          const failProposals = await TransactionService.buildFailTransactionProposals(
+            worldId,
+            tx.id,
+            reason,
+            currentEpoch
+          );
+          const failResult = await recorder.commit(worldId, failProposals);
+          if (failResult.success) {
+            failedTransactions.push(tx.id);
+            eventsGenerated.push(...failResult.eventsGenerated);
+          }
+          continue;
+        }
+      }
+
+      // 5. Construct proposals for successful checkpoint processing
       const proposals: StateChangeProposal[] = [
         {
           id: `prop-cp-proc-${cp.id}`,
@@ -72,7 +157,7 @@ export class CheckpointProcessor {
       ];
 
       if (cp.type === 'DESTINATION_ARRIVAL') {
-        const destLocId = cp.payload?.locationId || tx.destination_location_id;
+        const destLocId = cp.payload?.locationId || tx.destination_location_id!;
         const destLoc = await WorldRepository.getLocation(worldId, destLocId);
         const destName = destLoc ? destLoc.name : destLocId;
 
@@ -143,17 +228,21 @@ export class CheckpointProcessor {
 
         completedTransactions.push(tx.id);
       } else {
-        // 'PROGRESS' checkpoint
+        // 'PROGRESS' intermediate checkpoint
         const stepLocId = cp.payload?.locationId;
         const stepLoc = stepLocId ? await WorldRepository.getLocation(worldId, stepLocId) : null;
         const stepLocName = stepLoc ? stepLoc.name : stepLocId || '途经点';
 
         proposals.push({
-          id: `prop-tx-progress-${tx.id}`,
+          id: `prop-tx-progress-${tx.id}-${cp.sequence}`,
           operation: 'UPDATE_WORLD_TRANSACTION',
           entityType: 'TRANSACTION',
           entityId: tx.id,
-          payload: { transactionId: tx.id, current_checkpoint_index: cp.sequence },
+          payload: {
+            transactionId: tx.id,
+            current_checkpoint_index: cp.sequence,
+            last_valid_location_id: stepLocId, // Spatial continuity update
+          },
           effectiveEpoch: currentEpoch,
           preconditions: [],
           source: { type: 'SCHEDULER', id: 'checkpointProcessor' },

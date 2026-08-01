@@ -8,8 +8,20 @@ import { RoutePlanner } from './routePlanner';
 import { TransactionStateMachine } from './transactionStateMachine';
 import { TimelineError } from './timelineErrors';
 
+export interface PreparedTravelPlan {
+  transaction: WorldTransaction;
+  checkpoints: ScheduledCheckpoint[];
+  proposals: StateChangeProposal[];
+  route: string[];
+  totalDistance: number;
+  totalEpochs: number;
+}
+
 export class TransactionService {
-  public static async planTravel(req: TravelPlanRequest): Promise<TravelPlanResult> {
+  /**
+   * Pure proposal builder for travel planning (decoupled from direct commit)
+   */
+  public static async buildTravelPlanProposals(req: TravelPlanRequest): Promise<PreparedTravelPlan> {
     // 1. Validation
     await TransactionValidator.validateTravelPlanRequest(req);
 
@@ -61,7 +73,7 @@ export class TransactionService {
       });
     }
 
-    // Build WorldTransaction
+    // Build WorldTransaction with initial last_valid_location_id = originId
     const transaction: WorldTransaction = {
       id: txId,
       world_id: req.worldId,
@@ -70,6 +82,7 @@ export class TransactionService {
       actor_ids: [req.actorId],
       origin_location_id: originId,
       destination_location_id: req.destinationLocationId,
+      last_valid_location_id: originId,
       route_location_ids: route.path,
       start_epoch: req.startEpoch,
       expected_end_epoch: expectedEndEpoch,
@@ -84,7 +97,7 @@ export class TransactionService {
       updated_at_epoch: req.startEpoch,
     };
 
-    // Construct Recorder State Proposals
+    // Construct State Change Proposals
     const proposals: StateChangeProposal[] = [
       {
         id: `prop-tx-create-${txId}`,
@@ -164,7 +177,20 @@ export class TransactionService {
       source: { type: 'TIMELINE', id: req.actorId },
     });
 
-    const commitResult = await recorder.commit(req.worldId, proposals);
+    return {
+      transaction,
+      checkpoints,
+      proposals,
+      route: route.path,
+      totalDistance: route.totalDistance,
+      totalEpochs: route.totalEpochs,
+    };
+  }
+
+  public static async planTravel(req: TravelPlanRequest): Promise<TravelPlanResult> {
+    const prepared = await TransactionService.buildTravelPlanProposals(req);
+
+    const commitResult = await recorder.commit(req.worldId, prepared.proposals);
     if (!commitResult.success) {
       throw new TimelineError(
         'RECORDER_COMMIT_FAILED',
@@ -173,20 +199,23 @@ export class TransactionService {
     }
 
     return {
-      transaction,
-      checkpoints,
-      totalDistance: route.totalDistance,
-      totalEpochs: route.totalEpochs,
-      route: route.path,
+      transaction: prepared.transaction,
+      checkpoints: prepared.checkpoints,
+      totalDistance: prepared.totalDistance,
+      totalEpochs: prepared.totalEpochs,
+      route: prepared.route,
     };
   }
 
-  public static async cancelTransaction(
+  /**
+   * Build proposals to cancel a transaction
+   */
+  public static async buildCancelTransactionProposals(
     worldId: string,
     transactionId: string,
     reason: string,
     epoch: number
-  ): Promise<void> {
+  ): Promise<StateChangeProposal[]> {
     const tx = await WorldRepository.getWorldTransaction(worldId, transactionId);
     if (!tx) {
       throw new TimelineError('TRANSACTION_NOT_FOUND', `Transaction [${transactionId}] not found`);
@@ -195,7 +224,7 @@ export class TransactionService {
     TransactionStateMachine.assertCanTransition(tx, 'CANCELLED');
 
     const pendingCheckpoints = await WorldRepository.getCheckpointsForTransaction(worldId, transactionId);
-    const duePending = pendingCheckpoints.filter((cp) => cp.status === 'PENDING');
+    const duePending = pendingCheckpoints.filter((cp) => cp.status === 'PENDING' || cp.status === 'PROCESSING');
 
     const proposals: StateChangeProposal[] = [
       {
@@ -224,7 +253,12 @@ export class TransactionService {
     }
 
     for (const actorId of tx.actor_ids) {
-      const fallbackLocId = tx.origin_location_id || 'loc-tavern';
+      const actor = await WorldRepository.getCharacter(worldId, actorId);
+      const isDead = actor?.status === 'DEAD';
+
+      // Spatial continuity: restore actor to last_valid_location_id, not origin!
+      const fallbackLocId = tx.last_valid_location_id || tx.origin_location_id || 'loc-tavern';
+
       proposals.push({
         id: `prop-actor-reset-${actorId}`,
         operation: 'SET_CHARACTER_PRESENCE',
@@ -232,7 +266,7 @@ export class TransactionService {
         entityId: actorId,
         payload: {
           characterId: actorId,
-          presence_state: 'AT_LOCATION',
+          presence_state: isDead ? 'DEAD' : 'AT_LOCATION',
           location_id: fallbackLocId,
           current_transaction_id: null,
         },
@@ -256,6 +290,16 @@ export class TransactionService {
       source: { type: 'TIMELINE', id: transactionId },
     });
 
+    return proposals;
+  }
+
+  public static async cancelTransaction(
+    worldId: string,
+    transactionId: string,
+    reason: string,
+    epoch: number
+  ): Promise<void> {
+    const proposals = await TransactionService.buildCancelTransactionProposals(worldId, transactionId, reason, epoch);
     const commitResult = await recorder.commit(worldId, proposals);
     if (!commitResult.success) {
       throw new TimelineError(
@@ -265,12 +309,15 @@ export class TransactionService {
     }
   }
 
-  public static async failTransaction(
+  /**
+   * Build proposals to fail a transaction
+   */
+  public static async buildFailTransactionProposals(
     worldId: string,
     transactionId: string,
     reason: string,
     epoch: number
-  ): Promise<void> {
+  ): Promise<StateChangeProposal[]> {
     const tx = await WorldRepository.getWorldTransaction(worldId, transactionId);
     if (!tx) {
       throw new TimelineError('TRANSACTION_NOT_FOUND', `Transaction [${transactionId}] not found`);
@@ -279,7 +326,7 @@ export class TransactionService {
     TransactionStateMachine.assertCanTransition(tx, 'FAILED');
 
     const pendingCheckpoints = await WorldRepository.getCheckpointsForTransaction(worldId, transactionId);
-    const duePending = pendingCheckpoints.filter((cp) => cp.status === 'PENDING');
+    const duePending = pendingCheckpoints.filter((cp) => cp.status === 'PENDING' || cp.status === 'PROCESSING');
 
     const proposals: StateChangeProposal[] = [
       {
@@ -308,7 +355,12 @@ export class TransactionService {
     }
 
     for (const actorId of tx.actor_ids) {
-      const fallbackLocId = tx.origin_location_id || 'loc-tavern';
+      const actor = await WorldRepository.getCharacter(worldId, actorId);
+      const isDead = actor?.status === 'DEAD';
+
+      // Spatial continuity: restore actor to last_valid_location_id
+      const fallbackLocId = tx.last_valid_location_id || tx.origin_location_id || 'loc-tavern';
+
       proposals.push({
         id: `prop-actor-fail-reset-${actorId}`,
         operation: 'SET_CHARACTER_PRESENCE',
@@ -316,7 +368,7 @@ export class TransactionService {
         entityId: actorId,
         payload: {
           characterId: actorId,
-          presence_state: 'AT_LOCATION',
+          presence_state: isDead ? 'DEAD' : 'AT_LOCATION',
           location_id: fallbackLocId,
           current_transaction_id: null,
         },
@@ -340,6 +392,16 @@ export class TransactionService {
       source: { type: 'TIMELINE', id: transactionId },
     });
 
+    return proposals;
+  }
+
+  public static async failTransaction(
+    worldId: string,
+    transactionId: string,
+    reason: string,
+    epoch: number
+  ): Promise<void> {
+    const proposals = await TransactionService.buildFailTransactionProposals(worldId, transactionId, reason, epoch);
     const commitResult = await recorder.commit(worldId, proposals);
     if (!commitResult.success) {
       throw new TimelineError(

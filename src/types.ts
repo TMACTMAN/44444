@@ -386,6 +386,7 @@ export interface WorldTransaction {
   actor_ids: string[];
   origin_location_id?: string | null;
   destination_location_id?: string | null;
+  last_valid_location_id?: string | null;
   route_location_ids: string[];
   start_epoch: number;
   expected_end_epoch: number;

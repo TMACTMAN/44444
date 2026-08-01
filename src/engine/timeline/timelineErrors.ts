@@ -1,5 +1,6 @@
 export type TimelineErrorCode =
   | 'INVALID_ROUTE'
+  | 'SAME_ORIGIN_AND_DESTINATION'
   | 'ACTOR_BUSY'
   | 'ACTOR_DEAD'
   | 'ORIGIN_MISMATCH'

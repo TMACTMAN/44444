@@ -3,7 +3,7 @@ import { CausalityPressure, Event } from '../types';
 import { globalWorld } from './worldState';
 import { recorder } from './recorder/recorder';
 import { StateChangeProposal } from './recorder/changeSchemas';
-import { CheckpointProcessor } from './timeline/checkpointProcessor';
+import { GlobalTimeline } from './timeline/globalTimeline';
 
 let genAIClient: GoogleGenAI | null = null;
 
@@ -58,8 +58,8 @@ export class CausalityEngine {
   public static async tickSeeds(): Promise<Event[]> {
     const currentEpoch = globalWorld.snapshot.epoch;
 
-    // Process due timeline checkpoints first
-    await CheckpointProcessor.processDueCheckpoints(globalWorld.snapshot.id || 'world-snapshot-001', currentEpoch);
+    // Process timeline progression up to current epoch
+    await GlobalTimeline.processUntil(globalWorld.snapshot.id || 'world-snapshot-001', currentEpoch);
 
     const proposals: StateChangeProposal[] = [];
 

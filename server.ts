@@ -16,6 +16,7 @@ import { StateChangeProposal } from './src/engine/recorder/changeSchemas';
 
 import { TransactionService } from './src/engine/timeline/transactionService';
 import { CheckpointProcessor } from './src/engine/timeline/checkpointProcessor';
+import { GlobalTimeline } from './src/engine/timeline/globalTimeline';
 import { TimelineError } from './src/engine/timeline/timelineErrors';
 
 dotenv.config();
@@ -312,15 +313,23 @@ async function startServer() {
 
   // === PHASE 3 TIMELINE API ENDPOINTS ===
 
-  // Plan travel transaction
-  app.post('/api/v1/timeline/plan-travel', async (req, res) => {
+  // Helper to resolve effective epoch for a given worldId
+  const getEffectiveEpoch = async (worldId: string, providedEpoch?: number) => {
+    if (typeof providedEpoch === 'number') return providedEpoch;
+    const snap = await WorldRepository.getWorldSnapshot(worldId);
+    return snap ? snap.epoch : globalWorld.snapshot.epoch;
+  };
+
+  // 1. Plan travel transaction
+  const handlePlanTravel = async (req: express.Request, res: express.Response) => {
     try {
-      const { worldId = 'world-snapshot-001', actorId, destinationLocationId, startEpoch, speedMultiplier } = req.body;
+      const worldId = req.params.worldId || req.body.worldId || 'world-snapshot-001';
+      const { actorId, destinationLocationId, startEpoch, speedMultiplier } = req.body;
       if (!actorId || !destinationLocationId) {
         res.status(400).json({ error: 'actorId and destinationLocationId are required' });
         return;
       }
-      const effectiveStartEpoch = typeof startEpoch === 'number' ? startEpoch : globalWorld.snapshot.epoch;
+      const effectiveStartEpoch = await getEffectiveEpoch(worldId, startEpoch);
       const result = await TransactionService.planTravel({
         worldId,
         actorId,
@@ -336,17 +345,22 @@ async function startServer() {
         res.status(500).json({ error: err.message || 'Internal server error' });
       }
     }
-  });
+  };
 
-  // Cancel transaction
-  app.post('/api/v1/timeline/cancel-transaction', async (req, res) => {
+  app.post('/api/v1/timeline/plan-travel', handlePlanTravel);
+  app.post('/api/v1/worlds/:worldId/transactions/travel', handlePlanTravel);
+
+  // 2. Cancel transaction
+  const handleCancelTransaction = async (req: express.Request, res: express.Response) => {
     try {
-      const { worldId = 'world-snapshot-001', transactionId, reason = 'User cancelled', epoch } = req.body;
+      const worldId = req.params.worldId || req.body.worldId || 'world-snapshot-001';
+      const transactionId = req.params.transactionId || req.body.transactionId;
+      const { reason = 'User cancelled', epoch } = req.body;
       if (!transactionId) {
         res.status(400).json({ error: 'transactionId is required' });
         return;
       }
-      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      const effectiveEpoch = await getEffectiveEpoch(worldId, epoch);
       await TransactionService.cancelTransaction(worldId, transactionId, reason, effectiveEpoch);
       res.json({ status: 'ok', transactionId });
     } catch (err: any) {
@@ -356,17 +370,22 @@ async function startServer() {
         res.status(500).json({ error: err.message || 'Internal server error' });
       }
     }
-  });
+  };
 
-  // Fail transaction
-  app.post('/api/v1/timeline/fail-transaction', async (req, res) => {
+  app.post('/api/v1/timeline/cancel-transaction', handleCancelTransaction);
+  app.post('/api/v1/worlds/:worldId/transactions/:transactionId/cancel', handleCancelTransaction);
+
+  // 3. Fail transaction
+  const handleFailTransaction = async (req: express.Request, res: express.Response) => {
     try {
-      const { worldId = 'world-snapshot-001', transactionId, reason = 'Travel interrupted', epoch } = req.body;
+      const worldId = req.params.worldId || req.body.worldId || 'world-snapshot-001';
+      const transactionId = req.params.transactionId || req.body.transactionId;
+      const { reason = 'Travel interrupted', epoch } = req.body;
       if (!transactionId) {
         res.status(400).json({ error: 'transactionId is required' });
         return;
       }
-      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      const effectiveEpoch = await getEffectiveEpoch(worldId, epoch);
       await TransactionService.failTransaction(worldId, transactionId, reason, effectiveEpoch);
       res.json({ status: 'ok', transactionId });
     } catch (err: any) {
@@ -376,38 +395,68 @@ async function startServer() {
         res.status(500).json({ error: err.message || 'Internal server error' });
       }
     }
-  });
+  };
 
-  // Get active transactions for actor
-  app.get('/api/v1/timeline/transactions/:actorId', async (req, res) => {
+  app.post('/api/v1/timeline/fail-transaction', handleFailTransaction);
+  app.post('/api/v1/worlds/:worldId/transactions/:transactionId/fail', handleFailTransaction);
+
+  // 4. Get active transactions for actor
+  const handleGetTransactionsForActor = async (req: express.Request, res: express.Response) => {
     try {
-      const worldId = (req.query.worldId as string) || 'world-snapshot-001';
-      const transactions = await WorldRepository.getTransactionsForActor(worldId, req.params.actorId);
+      const worldId = req.params.worldId || (req.query.worldId as string) || 'world-snapshot-001';
+      const actorId = req.params.actorId;
+      const transactions = await WorldRepository.getTransactionsForActor(worldId, actorId);
       res.json({ status: 'ok', transactions });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
-  });
+  };
 
-  // Get due checkpoints
-  app.get('/api/v1/timeline/checkpoints/due', async (req, res) => {
+  app.get('/api/v1/timeline/transactions/:actorId', handleGetTransactionsForActor);
+  app.get('/api/v1/worlds/:worldId/transactions/actor/:actorId', handleGetTransactionsForActor);
+
+  // 5. Get due checkpoints
+  const handleGetDueCheckpoints = async (req: express.Request, res: express.Response) => {
     try {
-      const worldId = (req.query.worldId as string) || 'world-snapshot-001';
-      const epoch = parseInt(req.query.epoch as string) || globalWorld.snapshot.epoch;
-      const checkpoints = await WorldRepository.getDueCheckpoints(worldId, epoch);
+      const worldId = req.params.worldId || (req.query.worldId as string) || 'world-snapshot-001';
+      const queryEpoch = req.query.epoch ? parseInt(req.query.epoch as string) : undefined;
+      const effectiveEpoch = await getEffectiveEpoch(worldId, queryEpoch);
+      const checkpoints = await WorldRepository.getDueCheckpoints(worldId, effectiveEpoch);
       res.json({ status: 'ok', checkpoints });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
-  });
+  };
 
-  // Process due checkpoints manually
-  app.post('/api/v1/timeline/checkpoints/process', async (req, res) => {
+  app.get('/api/v1/timeline/checkpoints/due', handleGetDueCheckpoints);
+  app.get('/api/v1/worlds/:worldId/checkpoints/due', handleGetDueCheckpoints);
+
+  // 6. Process due checkpoints
+  const handleProcessCheckpoints = async (req: express.Request, res: express.Response) => {
     try {
-      const { worldId = 'world-snapshot-001', epoch } = req.body;
-      const effectiveEpoch = typeof epoch === 'number' ? epoch : globalWorld.snapshot.epoch;
+      const worldId = req.params.worldId || req.body.worldId || 'world-snapshot-001';
+      const effectiveEpoch = await getEffectiveEpoch(worldId, req.body.epoch);
       const result = await CheckpointProcessor.processDueCheckpoints(worldId, effectiveEpoch);
       res.json({ status: 'ok', ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  app.post('/api/v1/timeline/checkpoints/process', handleProcessCheckpoints);
+  app.post('/api/v1/worlds/:worldId/checkpoints/process', handleProcessCheckpoints);
+
+  // 7. GlobalTimeline process until target epoch
+  app.post('/api/v1/worlds/:worldId/timeline/process-until', async (req, res) => {
+    try {
+      const worldId = req.params.worldId || 'world-snapshot-001';
+      const { targetEpoch } = req.body;
+      if (typeof targetEpoch !== 'number') {
+        res.status(400).json({ error: 'targetEpoch is required as a number' });
+        return;
+      }
+      const summary = await GlobalTimeline.processUntil(worldId, targetEpoch);
+      res.json({ status: 'ok', summary });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

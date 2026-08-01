@@ -11,26 +11,26 @@ export class RoutePlanner {
     speedMultiplier = 1.0
   ): Promise<RoutePathResult> {
     if (originId === destinationId) {
-      return {
-        path: [originId],
-        edges: [],
-        totalDistance: 0,
-        totalCost: 0,
-        totalEpochs: 0,
-      };
+      throw new TimelineError(
+        'SAME_ORIGIN_AND_DESTINATION',
+        `Travel origin and destination cannot be identical [${originId}]`
+      );
     }
 
-    // 1. Fetch edges from DB
+    // 1. Fetch edges from DB (authoritative location_edges)
     let edges = await WorldRepository.getAllLocationEdges(worldId);
-
-    // Fallback if no edges in DB: construct virtual edges from Location connected_to
     if (edges.length === 0) {
       const locations = await WorldRepository.getAllLocations(worldId);
-      const locMap = new Map<string, Location>(locations.map((l) => [l.id, l]));
+      if (locations.length === 0) {
+        throw new TimelineError(
+          'INVALID_ROUTE',
+          `No locations found for world [${worldId}]`
+        );
+      }
       const generatedEdges: LocationEdge[] = [];
       for (const loc of locations) {
         for (const connId of loc.connected_to) {
-          generatedEdges.push({
+          const edge: LocationEdge = {
             id: `edge-${loc.id}-${connId}`,
             world_id: worldId,
             from_location_id: loc.id,
@@ -39,7 +39,9 @@ export class RoutePlanner {
             travel_cost: 1.0,
             travel_time_epochs: 1,
             status: 'OPEN',
-          });
+          };
+          await WorldRepository.saveLocationEdge(worldId, edge);
+          generatedEdges.push(edge);
         }
       }
       edges = generatedEdges;
