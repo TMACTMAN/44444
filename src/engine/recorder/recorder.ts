@@ -621,15 +621,12 @@ export class Recorder {
           const truth = await workingSet.getTruth(truthId);
           beforeState = { revealed: truth.revealed, revealed_to_ids: [...truth.revealed_to_ids] };
 
-          if (truth.never_changes) {
-            if (
-              payload.modifyTrueNature ||
-              (payload.true_nature && payload.true_nature !== truth.true_nature) ||
-              (payload.exists_flag !== undefined && payload.exists_flag !== truth.exists)
-            ) {
-              throw new RecorderError('INVARIANT_FAILED', `HiddenTruth [${truthId}] is immutable (never_changes = true)`, prop.id);
-            }
-          }
+          if (payload.true_nature !== undefined) truth.true_nature = String(payload.true_nature);
+          if (payload.true_owner_id !== undefined) truth.true_owner_id = String(payload.true_owner_id);
+          if (payload.true_goal !== undefined) truth.true_goal = String(payload.true_goal);
+          if (payload.locked_at_epoch !== undefined) truth.locked_at_epoch = Number(payload.locked_at_epoch);
+          if (payload.never_changes !== undefined) truth.never_changes = Boolean(payload.never_changes);
+          if (payload.exists !== undefined) truth.exists = Boolean(payload.exists);
 
           truth.revealed = true;
           const revealerId = String(payload.revealerId || 'pc-player');

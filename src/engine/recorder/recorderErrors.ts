@@ -1,5 +1,6 @@
 export type RecorderErrorCode =
   | 'ENTITY_NOT_FOUND'
+  | 'WORLD_NOT_FOUND'
   | 'CHARACTER_NOT_FOUND'
   | 'LOCATION_NOT_FOUND'
   | 'ORGANIZATION_NOT_FOUND'

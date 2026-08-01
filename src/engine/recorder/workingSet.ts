@@ -37,7 +37,10 @@ export class RecorderWorkingSet {
       return this.workingSnapshot;
     }
     const fromRepo = await WorldRepository.getWorldSnapshot(this.worldId);
-    const snapshot = fromRepo ? deepClone(fromRepo) : deepClone(globalWorld.snapshot);
+    if (!fromRepo) {
+      throw new RecorderError('WORLD_NOT_FOUND', `World snapshot [${this.worldId}] not found in database Repository`);
+    }
+    const snapshot = deepClone(fromRepo);
     this.originalSnapshot = deepClone(snapshot);
     this.workingSnapshot = deepClone(snapshot);
     return this.workingSnapshot;

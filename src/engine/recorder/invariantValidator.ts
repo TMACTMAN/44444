@@ -62,12 +62,23 @@ export class InvariantValidator {
     if (operation === 'REVEAL_TRUTH' || operation === 'COLLECT_EVIDENCE') {
       const truthId = (entityId || payload.truthId) as string;
       if (truthId) {
-        const truth = globalWorld.hiddenTruths.get(truthId);
-        if (truth && truth.never_changes && payload.modifyTrueNature) {
-          return {
-            passed: false,
-            error: `Invariant Violation: Hidden Truth ${truthId} is locked and immutable. True nature cannot be modified.`,
-          };
+        const truth = (await WorldRepository.getHiddenTruth(worldId, truthId)) || globalWorld.hiddenTruths.get(truthId);
+        if (truth && truth.never_changes) {
+          const hasImmutablePayload =
+            payload.modifyTrueNature ||
+            (payload.true_nature !== undefined && payload.true_nature !== truth.true_nature) ||
+            (payload.true_owner_id !== undefined && payload.true_owner_id !== truth.true_owner_id) ||
+            (payload.true_goal !== undefined && payload.true_goal !== truth.true_goal) ||
+            (payload.locked_at_epoch !== undefined && payload.locked_at_epoch !== truth.locked_at_epoch) ||
+            (payload.never_changes !== undefined && payload.never_changes !== truth.never_changes) ||
+            (payload.exists !== undefined && payload.exists !== truth.exists);
+
+          if (hasImmutablePayload) {
+            return {
+              passed: false,
+              error: `Invariant Violation: Hidden Truth ${truthId} is locked and immutable.`,
+            };
+          }
         }
       }
     }

@@ -36,8 +36,12 @@ export class DatabaseManager {
         this.db = new SQL.Database(filebuffer);
         this.db.exec('PRAGMA schema_version;');
       } catch (err) {
-        console.warn(`[DatabaseManager] Existing DB at ${DB_PATH} is malformed. Re-creating clean DB...`, err);
-        try { fs.unlinkSync(DB_PATH); } catch (_) {}
+        console.warn(`[DatabaseManager] Existing DB at ${DB_PATH} is malformed. Archiving corrupt DB...`, err);
+        try {
+          const corruptBackupPath = `${DB_PATH}.corrupt-${Date.now()}`;
+          fs.renameSync(DB_PATH, corruptBackupPath);
+          console.warn(`[DatabaseManager] Corrupt DB archived to ${corruptBackupPath}`);
+        } catch (_) {}
         this.db = new SQL.Database();
       }
     } else {
