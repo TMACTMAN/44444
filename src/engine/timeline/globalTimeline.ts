@@ -21,15 +21,18 @@ export class GlobalTimeline {
     targetEpoch: number
   ): Promise<TimelineProcessSummary> {
     const snapshot = await WorldRepository.getWorldSnapshot(worldId);
-    const startEpoch = snapshot ? snapshot.epoch : 1;
+    const currentDbEpoch = snapshot ? snapshot.epoch : 1;
+    // Strict Epoch Cap: Cannot process checkpoints for future epochs beyond current DB epoch
+    const safeTargetEpoch = Math.min(targetEpoch, currentDbEpoch);
+    const startEpoch = Math.min(currentDbEpoch, safeTargetEpoch);
 
     let totalProcessed = 0;
     const completedTransactions: string[] = [];
     const failedTransactions: string[] = [];
     let eventsGeneratedCount = 0;
 
-    // Advance epoch step-by-step from startEpoch to targetEpoch
-    for (let ep = Math.min(startEpoch, targetEpoch); ep <= targetEpoch; ep++) {
+    // Advance epoch step-by-step from startEpoch to safeTargetEpoch
+    for (let ep = startEpoch; ep <= safeTargetEpoch; ep++) {
       const res: CheckpointProcessResult = await CheckpointProcessor.processDueCheckpoints(worldId, ep);
       totalProcessed += res.processedCount;
       completedTransactions.push(...res.completedTransactions);
@@ -40,7 +43,7 @@ export class GlobalTimeline {
     return {
       worldId,
       startEpoch,
-      targetEpoch,
+      targetEpoch: safeTargetEpoch,
       processedCheckpoints: totalProcessed,
       completedTransactions,
       failedTransactions,

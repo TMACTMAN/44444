@@ -744,6 +744,7 @@ export class Recorder {
           const cp = await workingSet.getCheckpoint(cpId);
           beforeState = deepClone(cp);
           if (payload.status) cp.status = payload.status;
+          if (typeof payload.epoch === 'number') cp.epoch = payload.epoch;
           if (typeof payload.processed_at_epoch === 'number') cp.processed_at_epoch = payload.processed_at_epoch;
           if (payload.locationId) {
             if (!cp.payload) cp.payload = {};

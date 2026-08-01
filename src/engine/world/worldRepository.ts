@@ -836,12 +836,21 @@ export class WorldRepository {
   }
 
   // === SCHEDULED CHECKPOINTS ===
+  public static async claimCheckpointForProcessing(worldId: string, checkpointId: string): Promise<boolean> {
+    const res = await dbManager.run(
+      `UPDATE scheduled_checkpoints SET status = 'PROCESSING' WHERE id = ? AND world_id = ? AND status = 'PENDING'`,
+      [checkpointId, worldId]
+    );
+    return (res.changes ?? 0) > 0;
+  }
+
   public static async saveScheduledCheckpoint(worldId: string, checkpoint: ScheduledCheckpoint): Promise<void> {
     await dbManager.run(
       `INSERT INTO scheduled_checkpoints (
         id, world_id, transaction_id, epoch, type, status, sequence, payload_json, created_at_epoch, processed_at_epoch
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        epoch = excluded.epoch,
         status = excluded.status,
         sequence = excluded.sequence,
         payload_json = excluded.payload_json,

@@ -58,9 +58,6 @@ export class CausalityEngine {
   public static async tickSeeds(): Promise<Event[]> {
     const currentEpoch = globalWorld.snapshot.epoch;
 
-    // Process timeline progression up to current epoch
-    await GlobalTimeline.processUntil(globalWorld.snapshot.id || 'world-snapshot-001', currentEpoch);
-
     const proposals: StateChangeProposal[] = [];
 
     globalWorld.seeds.forEach((seed) => {

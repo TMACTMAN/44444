@@ -18,33 +18,12 @@ export class RoutePlanner {
     }
 
     // 1. Fetch edges from DB (authoritative location_edges)
-    let edges = await WorldRepository.getAllLocationEdges(worldId);
+    const edges = await WorldRepository.getAllLocationEdges(worldId);
     if (edges.length === 0) {
-      const locations = await WorldRepository.getAllLocations(worldId);
-      if (locations.length === 0) {
-        throw new TimelineError(
-          'INVALID_ROUTE',
-          `No locations found for world [${worldId}]`
-        );
-      }
-      const generatedEdges: LocationEdge[] = [];
-      for (const loc of locations) {
-        for (const connId of loc.connected_to) {
-          const edge: LocationEdge = {
-            id: `edge-${loc.id}-${connId}`,
-            world_id: worldId,
-            from_location_id: loc.id,
-            to_location_id: connId,
-            distance: 1.0,
-            travel_cost: 1.0,
-            travel_time_epochs: 1,
-            status: 'OPEN',
-          };
-          await WorldRepository.saveLocationEdge(worldId, edge);
-          generatedEdges.push(edge);
-        }
-      }
-      edges = generatedEdges;
+      throw new TimelineError(
+        'INVALID_ROUTE',
+        `No location edges found for world [${worldId}]`
+      );
     }
 
     // Build adjacency graph for OPEN edges

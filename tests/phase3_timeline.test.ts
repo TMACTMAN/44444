@@ -8,6 +8,9 @@ import { RoutePlanner } from '../src/engine/timeline/routePlanner';
 import { TransactionStateMachine } from '../src/engine/timeline/transactionStateMachine';
 import { TimelineError } from '../src/engine/timeline/timelineErrors';
 import { recorder } from '../src/engine/recorder/recorder';
+import { SchedulerEngine } from '../src/engine/scheduler';
+import { globalWorld } from '../src/engine/worldState';
+import { dbManager } from '../src/engine/persistence/database';
 
 describe('Phase 3 Timeline Integration Suite', () => {
   let testWorldId: string;
@@ -55,6 +58,19 @@ describe('Phase 3 Timeline Integration Suite', () => {
       destinationLocationId: 'loc-ruins',
       startEpoch: 1,
     });
+
+    // Advance DB epoch to 3 so GlobalTimeline can process up to epoch 3
+    await recorder.commit(testWorldId, [
+      {
+        id: 'prop-advance-epoch-3',
+        operation: 'ADVANCE_WORLD_EPOCH',
+        entityType: 'WORLD',
+        payload: { advanceBy: 2 },
+        effectiveEpoch: 3,
+        preconditions: [],
+        source: { type: 'SCHEDULER' },
+      },
+    ]);
 
     // Advance timeline using GlobalTimeline up to epoch 3
     const summary = await GlobalTimeline.processUntil(testWorldId, 3);
@@ -160,7 +176,7 @@ describe('Phase 3 Timeline Integration Suite', () => {
     expect(procRes.failedTransactions).toContain(travelMissingDest.transaction.id);
   });
 
-  it('7. Dynamic Road Closure: fails transaction if edge is BLOCKED', async () => {
+  it('7. Dynamic Road Closure: DELAYED rescheduling and eventual FAILED after max delays', async () => {
     const travelResult = await TransactionService.planTravel({
       worldId: testWorldId,
       actorId: 'pc-player',
@@ -180,15 +196,34 @@ describe('Phase 3 Timeline Integration Suite', () => {
       status: 'CLOSED',
     });
 
-    const procRes = await CheckpointProcessor.processDueCheckpoints(testWorldId, 2);
-    expect(procRes.failedTransactions).toContain(travelResult.transaction.id);
+    // 1st attempt at epoch 2: Road is blocked -> DELAYED (+1 epoch)
+    const procRes1 = await CheckpointProcessor.processDueCheckpoints(testWorldId, 2);
+    expect(procRes1.failedTransactions.length).toBe(0);
+    const tx1 = await WorldRepository.getWorldTransaction(testWorldId, travelResult.transaction.id);
+    expect(tx1?.result?.delayCount).toBe(1);
+
+    // 2nd attempt at epoch 3: Road is blocked -> DELAYED (+1 epoch)
+    const procRes2 = await CheckpointProcessor.processDueCheckpoints(testWorldId, 3);
+    expect(procRes2.failedTransactions.length).toBe(0);
+    const tx2 = await WorldRepository.getWorldTransaction(testWorldId, travelResult.transaction.id);
+    expect(tx2?.result?.delayCount).toBe(2);
+
+    // 3rd attempt at epoch 4: Road is blocked -> DELAYED (+1 epoch)
+    const procRes3 = await CheckpointProcessor.processDueCheckpoints(testWorldId, 4);
+    expect(procRes3.failedTransactions.length).toBe(0);
+    const tx3 = await WorldRepository.getWorldTransaction(testWorldId, travelResult.transaction.id);
+    expect(tx3?.result?.delayCount).toBe(3);
+
+    // 4th attempt at epoch 5: Max delays (3) reached -> FAILS!
+    const procRes4 = await CheckpointProcessor.processDueCheckpoints(testWorldId, 5);
+    expect(procRes4.failedTransactions).toContain(travelResult.transaction.id);
 
     const failedTx = await WorldRepository.getWorldTransaction(testWorldId, travelResult.transaction.id);
     expect(failedTx?.status).toBe('FAILED');
-    expect(failedTx?.invalidation_reason).toContain('closed/blocked');
+    expect(failedTx?.invalidation_reason).toContain('maximum 3 delays');
   });
 
-  it('8. Idempotency Lock: double processing does not duplicate actions', async () => {
+  it('8. Idempotency Lock: atomic DB claim lock prevents double processing', async () => {
     await TransactionService.planTravel({
       worldId: testWorldId,
       actorId: 'pc-player',
@@ -204,7 +239,50 @@ describe('Phase 3 Timeline Integration Suite', () => {
     expect(proc2.processedCount).toBe(0);
   });
 
-  it('9. State Machine Enforces Legal Transitions', () => {
+  it('9. Epoch Cap Enforcement: GlobalTimeline cannot process future epochs beyond current DB epoch', async () => {
+    await TransactionService.planTravel({
+      worldId: testWorldId,
+      actorId: 'pc-player',
+      destinationLocationId: 'loc-ruins',
+      startEpoch: 1,
+    });
+
+    // DB Epoch is currently 1. Requesting processUntil up to epoch 100 should cap targetEpoch to 1
+    const summary = await GlobalTimeline.processUntil(testWorldId, 100);
+    expect(summary.targetEpoch).toBe(1);
+    expect(summary.processedCheckpoints).toBe(0);
+  });
+
+  it('10. Scheduler Integration: processEpochTick advances DB epoch and processes due checkpoints', async () => {
+    const defaultWorldId = 'world-snapshot-001';
+    await dbManager.run('DELETE FROM world_transactions WHERE world_id = ?', [defaultWorldId]);
+    await dbManager.run('DELETE FROM scheduled_checkpoints WHERE world_id = ?', [defaultWorldId]);
+    await WorldBootstrap.bootstrap(defaultWorldId);
+
+    const travelResult = await TransactionService.planTravel({
+      worldId: defaultWorldId,
+      actorId: 'pc-player',
+      destinationLocationId: 'loc-ruins',
+      startEpoch: 1,
+    });
+
+    // Advance 1 epoch tick via SchedulerEngine
+    await SchedulerEngine.processEpochTick(); // Epoch -> 2
+    expect(globalWorld.snapshot.epoch).toBe(2);
+
+    // Advance 2nd epoch tick via SchedulerEngine
+    await SchedulerEngine.processEpochTick(); // Epoch -> 3
+    expect(globalWorld.snapshot.epoch).toBe(3);
+
+    const actor = await WorldRepository.getCharacter(defaultWorldId, 'pc-player');
+    expect(actor?.presence_state).toBe('AT_LOCATION');
+    expect(actor?.location_id).toBe('loc-ruins');
+
+    const tx = await WorldRepository.getWorldTransaction(defaultWorldId, travelResult.transaction.id);
+    expect(tx?.status).toBe('COMPLETED');
+  });
+
+  it('11. State Machine Enforces Legal Transitions', () => {
     const mockTx: any = {
       id: 'tx-test',
       status: 'COMPLETED',

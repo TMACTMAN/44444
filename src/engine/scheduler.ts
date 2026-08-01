@@ -3,6 +3,7 @@ import { globalWorld } from './worldState';
 import { check7Invariants } from './invariants';
 import { recorder } from './recorder/recorder';
 import { StateChangeProposal } from './recorder/changeSchemas';
+import { GlobalTimeline } from './timeline/globalTimeline';
 
 export const WAKE_WEIGHTS: Record<string, number> = {
   PLAYER_APPROACH: 0,
@@ -148,6 +149,10 @@ export class SchedulerEngine {
 
     // Commit all proposals via Recorder
     await recorder.commit('world-snapshot-001', proposals);
+
+    // Process global timeline up to current epoch in database
+    const worldId = globalWorld.snapshot.id || 'world-snapshot-001';
+    await GlobalTimeline.processUntil(worldId, globalWorld.snapshot.epoch);
 
     // 4. Run safety 7 Invariant Checks
     const invariantRes = check7Invariants(
