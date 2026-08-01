@@ -273,7 +273,8 @@ export class Recorder {
     const workingSet = new RecorderWorkingSet(worldId);
     const eventWrites: Event[] = [];
     const changeLogs: StateChangeLogEntry[] = [];
-    const beforeEpoch = globalWorld.snapshot.epoch;
+    const initialSnapshot = await workingSet.getWorldSnapshot();
+    const beforeEpoch = initialSnapshot.epoch;
 
     let worldSnapshotAfter: WorldSnapshot | undefined;
 
@@ -606,7 +607,7 @@ export class Recorder {
           const advanceBy = Number(payload.advanceBy || 1);
 
           if (!worldSnapshotAfter) {
-            worldSnapshotAfter = deepClone(globalWorld.snapshot);
+            worldSnapshotAfter = deepClone(await workingSet.getWorldSnapshot());
           }
           worldSnapshotAfter.epoch += advanceBy;
           worldSnapshotAfter.completed_epochs = worldSnapshotAfter.epoch;
@@ -709,7 +710,7 @@ export class Recorder {
     }
 
     // Batch Invariant Check on the final working set
-    const finalSnapshot = worldSnapshotAfter || deepClone(globalWorld.snapshot);
+    const finalSnapshot = worldSnapshotAfter || await workingSet.getWorldSnapshot();
     await BatchInvariantValidator.validateBatch(workingSet, finalSnapshot, beforeEpoch);
 
     return {

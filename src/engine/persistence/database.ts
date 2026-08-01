@@ -31,8 +31,15 @@ export class DatabaseManager {
     }
 
     if (fs.existsSync(DB_PATH)) {
-      const filebuffer = fs.readFileSync(DB_PATH);
-      this.db = new SQL.Database(filebuffer);
+      try {
+        const filebuffer = fs.readFileSync(DB_PATH);
+        this.db = new SQL.Database(filebuffer);
+        this.db.exec('PRAGMA schema_version;');
+      } catch (err) {
+        console.warn(`[DatabaseManager] Existing DB at ${DB_PATH} is malformed. Re-creating clean DB...`, err);
+        try { fs.unlinkSync(DB_PATH); } catch (_) {}
+        this.db = new SQL.Database();
+      }
     } else {
       this.db = new SQL.Database();
     }

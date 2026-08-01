@@ -57,12 +57,17 @@ export class BatchInvariantValidator {
         }
       }
 
-      // 9. 死亡角色不可获得新行动
+      // 9. 死亡角色不可获得新行动 (Before/After 校验)
       if (char.status === 'DEAD' && char.current_action && char.current_action.type !== 'IDLE' && char.current_action.type !== 'NONE') {
-        throw new RecorderError(
-          'INVARIANT_FAILED',
-          `Dead character [${char.id}] cannot execute action [${char.current_action.type}]`
-        );
+        const origChar = workingSet.getOriginalCharacter(char.id);
+        const actionChanged = !origChar || !deepEqual(origChar.current_action, char.current_action);
+        const statusChangedToDead = (!origChar || origChar.status !== 'DEAD') && char.status === 'DEAD';
+        if (actionChanged || statusChangedToDead) {
+          throw new RecorderError(
+            'INVARIANT_FAILED',
+            `Dead character [${char.id}] cannot execute action [${char.current_action.type}]`
+          );
+        }
       }
     }
 
@@ -116,18 +121,15 @@ export class BatchInvariantValidator {
     // Check Dirty Hidden Truths (Immutable fields protection)
     const dirtyTruths = workingSet.getDirtyTruths();
     for (const truth of dirtyTruths) {
-      if (truth.never_changes) {
-        // If immutable, verify immutable fields against repository version
-        try {
-          const original = await workingSet.getTruth(truth.id);
+      const original = workingSet.getOriginalTruth(truth.id);
+      if (original) {
+        if (original.never_changes || truth.never_changes) {
           const immutableFields = ['exists', 'true_nature', 'true_owner_id', 'true_goal', 'locked_at_epoch', 'never_changes'] as const;
           for (const field of immutableFields) {
             if (!deepEqual(original[field], truth[field])) {
               throw new RecorderError('INVARIANT_FAILED', `Immutable Hidden Truth field changed: ${field}`);
             }
           }
-        } catch (err: any) {
-          if (err instanceof RecorderError) throw err;
         }
       }
     }

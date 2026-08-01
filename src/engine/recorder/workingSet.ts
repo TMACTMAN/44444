@@ -1,6 +1,7 @@
-import { Character, Location, Organization, Seed, HiddenTruth } from '../../types';
+import { Character, Location, Organization, Seed, HiddenTruth, WorldSnapshot } from '../../types';
 import { WorldRepository } from '../world/worldRepository';
 import { RecorderError } from './recorderErrors';
+import { globalWorld } from '../worldState';
 
 function deepClone<T>(obj: T): T {
   if (obj === undefined || obj === null) return obj;
@@ -14,6 +15,15 @@ export class RecorderWorkingSet {
   private seeds = new Map<string, Seed>();
   private truths = new Map<string, HiddenTruth>();
 
+  private originalCharacters = new Map<string, Character>();
+  private originalLocations = new Map<string, Location>();
+  private originalOrganizations = new Map<string, Organization>();
+  private originalSeeds = new Map<string, Seed>();
+  private originalTruths = new Map<string, HiddenTruth>();
+
+  private originalSnapshot?: WorldSnapshot;
+  private workingSnapshot?: WorldSnapshot;
+
   private dirtyCharacterIds = new Set<string>();
   private dirtyLocationIds = new Set<string>();
   private dirtyOrganizationIds = new Set<string>();
@@ -21,6 +31,21 @@ export class RecorderWorkingSet {
   private dirtyTruthIds = new Set<string>();
 
   constructor(public readonly worldId: string) {}
+
+  public async getWorldSnapshot(): Promise<WorldSnapshot> {
+    if (this.workingSnapshot) {
+      return this.workingSnapshot;
+    }
+    const fromRepo = await WorldRepository.getWorldSnapshot(this.worldId);
+    const snapshot = fromRepo ? deepClone(fromRepo) : deepClone(globalWorld.snapshot);
+    this.originalSnapshot = deepClone(snapshot);
+    this.workingSnapshot = deepClone(snapshot);
+    return this.workingSnapshot;
+  }
+
+  public getOriginalWorldSnapshot(): WorldSnapshot | undefined {
+    return this.originalSnapshot;
+  }
 
   public async getCharacter(id: string): Promise<Character> {
     if (this.characters.has(id)) {
@@ -30,9 +55,15 @@ export class RecorderWorkingSet {
     if (!fromRepo) {
       throw new RecorderError('CHARACTER_NOT_FOUND', `Character [${id}] not found in world [${this.worldId}]`);
     }
-    const copy = deepClone(fromRepo);
-    this.characters.set(id, copy);
-    return copy;
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalCharacters.set(id, origCopy);
+    this.characters.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalCharacter(id: string): Character | undefined {
+    return this.originalCharacters.get(id);
   }
 
   public markCharacterDirty(id: string): void {
@@ -64,9 +95,15 @@ export class RecorderWorkingSet {
     if (!fromRepo) {
       throw new RecorderError('LOCATION_NOT_FOUND', `Location [${id}] not found in world [${this.worldId}]`);
     }
-    const copy = deepClone(fromRepo);
-    this.locations.set(id, copy);
-    return copy;
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalLocations.set(id, origCopy);
+    this.locations.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalLocation(id: string): Location | undefined {
+    return this.originalLocations.get(id);
   }
 
   public markLocationDirty(id: string): void {
@@ -98,9 +135,15 @@ export class RecorderWorkingSet {
     if (!fromRepo) {
       throw new RecorderError('ORGANIZATION_NOT_FOUND', `Organization [${id}] not found in world [${this.worldId}]`);
     }
-    const copy = deepClone(fromRepo);
-    this.organizations.set(id, copy);
-    return copy;
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalOrganizations.set(id, origCopy);
+    this.organizations.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalOrganization(id: string): Organization | undefined {
+    return this.originalOrganizations.get(id);
   }
 
   public markOrganizationDirty(id: string): void {
@@ -132,9 +175,15 @@ export class RecorderWorkingSet {
     if (!fromRepo) {
       throw new RecorderError('SEED_NOT_FOUND', `Seed [${id}] not found in world [${this.worldId}]`);
     }
-    const copy = deepClone(fromRepo);
-    this.seeds.set(id, copy);
-    return copy;
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalSeeds.set(id, origCopy);
+    this.seeds.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalSeed(id: string): Seed | undefined {
+    return this.originalSeeds.get(id);
   }
 
   public markSeedDirty(id: string): void {
@@ -166,9 +215,15 @@ export class RecorderWorkingSet {
     if (!fromRepo) {
       throw new RecorderError('TRUTH_NOT_FOUND', `HiddenTruth [${id}] not found in world [${this.worldId}]`);
     }
-    const copy = deepClone(fromRepo);
-    this.truths.set(id, copy);
-    return copy;
+    const origCopy = deepClone(fromRepo);
+    const workCopy = deepClone(fromRepo);
+    this.originalTruths.set(id, origCopy);
+    this.truths.set(id, workCopy);
+    return workCopy;
+  }
+
+  public getOriginalTruth(id: string): HiddenTruth | undefined {
+    return this.originalTruths.get(id);
   }
 
   public markTruthDirty(id: string): void {

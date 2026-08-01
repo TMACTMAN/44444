@@ -144,14 +144,63 @@ export class WorldDataStore {
     setRuntimeWriteLocked(val);
   }
 
-  public snapshot: WorldSnapshot;
-  public characters: Map<string, Character> = createGuardedMap(new Map());
-  public organizations: Map<string, Organization> = createGuardedMap(new Map());
-  public locations: Map<string, Location> = createGuardedMap(new Map());
-  public facts: Map<string, WorldFact> = createGuardedMap(new Map());
-  public seeds: Map<string, Seed> = createGuardedMap(new Map());
-  public events: Event[] = createGuardedArray([]);
-  public hiddenTruths: Map<string, HiddenTruth> = createGuardedMap(new Map());
+  private _snapshot!: WorldSnapshot;
+  private _characters: Map<string, Character> = createGuardedMap(new Map());
+  private _organizations: Map<string, Organization> = createGuardedMap(new Map());
+  private _locations: Map<string, Location> = createGuardedMap(new Map());
+  private _facts: Map<string, WorldFact> = createGuardedMap(new Map());
+  private _seeds: Map<string, Seed> = createGuardedMap(new Map());
+  private _events: Event[] = createGuardedArray([]);
+  private _hiddenTruths: Map<string, HiddenTruth> = createGuardedMap(new Map());
+
+  public get snapshot(): WorldSnapshot { return this._snapshot; }
+  public set snapshot(val: WorldSnapshot) {
+    assertRecorderWriteContext();
+    this._snapshot = createGuardedObject(val);
+  }
+
+  public get characters(): Map<string, Character> { return this._characters; }
+  public set characters(val: Map<string, Character>) {
+    assertRecorderWriteContext();
+    this._characters = createGuardedMap(val);
+  }
+
+  public get organizations(): Map<string, Organization> { return this._organizations; }
+  public set organizations(val: Map<string, Organization>) {
+    assertRecorderWriteContext();
+    this._organizations = createGuardedMap(val);
+  }
+
+  public get locations(): Map<string, Location> { return this._locations; }
+  public set locations(val: Map<string, Location>) {
+    assertRecorderWriteContext();
+    this._locations = createGuardedMap(val);
+  }
+
+  public get facts(): Map<string, WorldFact> { return this._facts; }
+  public set facts(val: Map<string, WorldFact>) {
+    assertRecorderWriteContext();
+    this._facts = createGuardedMap(val);
+  }
+
+  public get seeds(): Map<string, Seed> { return this._seeds; }
+  public set seeds(val: Map<string, Seed>) {
+    assertRecorderWriteContext();
+    this._seeds = createGuardedMap(val);
+  }
+
+  public get events(): Event[] { return this._events; }
+  public set events(val: Event[]) {
+    assertRecorderWriteContext();
+    this._events = createGuardedArray(val);
+  }
+
+  public get hiddenTruths(): Map<string, HiddenTruth> { return this._hiddenTruths; }
+  public set hiddenTruths(val: Map<string, HiddenTruth>) {
+    assertRecorderWriteContext();
+    this._hiddenTruths = createGuardedMap(val);
+  }
+
   public wakeQueue: WakeSignal[] = [];
   public totalLLMCalls: number = 0;
   public llmCallsThisEpoch: number = 0;
